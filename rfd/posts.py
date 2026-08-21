@@ -1,6 +1,6 @@
 # pylint: disable=old-style-class
-import os
 import json
+import shutil
 from colorama import Fore, Style
 from .scores import get_vote_color
 
@@ -24,8 +24,7 @@ class PostEncoder(json.JSONEncoder):
 
 
 def get_terminal_width():
-    _, columns = os.popen("stty size", "r").read().split()
-    return int(columns)
+    return shutil.get_terminal_size().columns
 
 
 def generate_posts_output(posts):

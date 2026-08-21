@@ -13,6 +13,7 @@ click = ">=7.0"
 colorama = ">=0.4.3"
 requests = ">=2.22.0"
 soupsieve = "<3.0"
+windows-curses = { version = ">=2.3", markers = "sys_platform == 'win32'" }
 
 [tool.poetry.dev-dependencies]
 pre-commit = "2.1.1"

@@ -21,12 +21,27 @@ from .threads import (
 )
 from .posts import generate_posts_output, PostEncoder
 
-
 init()
 
 logging.getLogger()
 logging.getLogger().setLevel(logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
+
+
+def load_browser():
+    """Return the curses browser, failing early and clearly when it cannot run."""
+    try:
+        from .interactive import browse  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        click.echo(
+            "Interactive mode needs the curses module. "
+            "On Windows, install it with: pip install windows-curses"
+        )
+        sys.exit(1)
+    if not sys.stdout.isatty():
+        click.echo("Interactive mode requires a terminal.")
+        sys.exit(1)
+    return browse
 
 
 def get_version():
@@ -100,7 +115,13 @@ def posts(post_id, output):
 @click.option(
     "--output", default=None, help="Defaults to custom formatting. Other options: json"
 )
-def threads(forum_id, pages, sort_by, output):
+@click.option(
+    "-i",
+    "--interactive",
+    is_flag=True,
+    help="Browse threads and posts with vim key bindings.",
+)
+def threads(forum_id, pages, sort_by, output, interactive):
     """Display threads in the specified forum id. Defaults to 9 (hot deals).
 
     Popular forum ids:
@@ -117,10 +138,18 @@ def threads(forum_id, pages, sort_by, output):
     74 \t shopping discussion
     88 \t cell phones
     """
+    browse = load_browser() if interactive else None
+
     _threads = sort_threads(
         parse_threads(get_threads(forum_id, pages)), sort_by=sort_by
     )
-    if output == "json":
+    if interactive:
+        browse(
+            _threads,
+            sort_by=sort_by,
+            reload_threads=lambda: parse_threads(get_threads(forum_id, pages)),
+        )
+    elif output == "json":
 
         click.echo_via_pager(
             json.dumps(
@@ -143,8 +172,16 @@ def threads(forum_id, pages, sort_by, output):
 @click.option(
     "--output", default=None, help="Defaults to custom formatting. Other options: json"
 )
+@click.option(
+    "-i",
+    "--interactive",
+    is_flag=True,
+    help="Browse matching threads and posts with vim key bindings.",
+)
 @click.argument("regex")
-def search(pages, forum_id, sort_by, output, regex):
+def search(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    pages, forum_id, sort_by, output, regex, interactive
+):
     """Search deals based on regex.
 
     Popular forum ids:
@@ -162,22 +199,24 @@ def search(pages, forum_id, sort_by, output, regex):
     88 \t cell phones
     """
 
-    matched_threads = []
+    browse = load_browser() if interactive else None
 
-    _threads = parse_threads(get_threads(forum_id, pages=pages))
-    for thread in search_threads(threads=_threads, regex=regex):
-        matched_threads.append(thread)
+    def find_threads():
+        _threads = parse_threads(get_threads(forum_id, pages=pages))
+        return list(search_threads(threads=_threads, regex=regex))
 
-    if output == "json":
+    matched_threads = sort_threads(find_threads(), sort_by=sort_by)
+
+    if interactive:
+        browse(matched_threads, sort_by=sort_by, reload_threads=find_threads)
+    elif output == "json":
         click.echo_via_pager(
             json.dumps(
-                sort_threads(matched_threads, sort_by=sort_by),
+                matched_threads,
                 indent=2,
                 sort_keys=True,
                 cls=ThreadEncoder,
             )
         )
     else:
-        click.echo_via_pager(
-            generate_thread_output(sort_threads(matched_threads, sort_by=sort_by))
-        )
+        click.echo_via_pager(generate_thread_output(matched_threads))

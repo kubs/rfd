@@ -14,6 +14,7 @@
   - [Search](#search)
     - [Regex](#regex)
   - [View Posts](#view-posts)
+  - [Interactive Mode](#interactive-mode)
   - [JSON Output](#json-output)
 - [Shell Completion](#shell-completion)
   - [bash](#bash)
@@ -110,6 +111,35 @@ rfd posts https://forums.redflagdeals.com/kobo-vs-kindle-2396227/
 ```
 
 This allows for easy grepping and searching for desired expressions.
+
+### Interactive Mode
+
+Instead of dumping to a pager, `--interactive` (`-i`) opens a browser with vim key bindings,
+so threads and their posts can be read without leaving the keyboard:
+
+```sh
+rfd threads -i
+rfd search 'coffee' -i --pages 10
+```
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, `down` / `up` | move down / up |
+| `ctrl-d` / `ctrl-u` | half page down / up |
+| `ctrl-f` / `ctrl-b` | full page down / up |
+| `g` / `G` | first / last, or `<number>G` to jump to a line |
+| `enter`, `o`, `l` | open the selected thread |
+| `q`, `h`, `esc` | go back (quits from the thread list) |
+| `Q` | quit |
+| `O` | open the thread in a web browser |
+| `y` | yank the thread url to the clipboard |
+| `/`, then `n` / `N` | search, next / previous match |
+| `s` | cycle sort (none, score, views, title) |
+| `r` | reload threads |
+| `?` | show the keys |
+
+Posts are fetched page by page in the background, so a long thread is scrollable
+as soon as its first page arrives.
 
 ### JSON Output
 
