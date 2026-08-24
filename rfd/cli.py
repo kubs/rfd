@@ -11,7 +11,7 @@ try:
 except ImportError:  # for Python<3.8
     import importlib_metadata as metadata
 from colorama import init
-from .api import get_threads, get_posts
+from .api import get_threads, get_threads_page, get_posts
 from .threads import (
     parse_threads,
     search_threads,
@@ -42,6 +42,23 @@ def load_browser():
         click.echo("Interactive mode requires a terminal.")
         sys.exit(1)
     return browse
+
+
+def make_page_loader(forum_id, regex=None):
+    """Build the load_page(page) callable the interactive feed pages with.
+
+    Returns (threads, topics_on_page): the second value is how the browser
+    tells "this page matched nothing" apart from "the forum ended".
+    """
+
+    def load_page(page):
+        topics = get_threads_page(forum_id, page)
+        parsed = parse_threads(topics)
+        if regex is not None:
+            parsed = list(search_threads(threads=parsed, regex=regex))
+        return parsed, len(topics)
+
+    return load_page
 
 
 def get_version():
@@ -147,7 +164,8 @@ def threads(forum_id, pages, sort_by, output, interactive):
         browse(
             _threads,
             sort_by=sort_by,
-            reload_threads=lambda: parse_threads(get_threads(forum_id, pages)),
+            load_page=make_page_loader(forum_id),
+            pages_loaded=pages,
         )
     elif output == "json":
 
@@ -201,14 +219,18 @@ def search(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
     browse = load_browser() if interactive else None
 
-    def find_threads():
-        _threads = parse_threads(get_threads(forum_id, pages=pages))
-        return list(search_threads(threads=_threads, regex=regex))
-
-    matched_threads = sort_threads(find_threads(), sort_by=sort_by)
+    _threads = parse_threads(get_threads(forum_id, pages=pages))
+    matched_threads = sort_threads(
+        list(search_threads(threads=_threads, regex=regex)), sort_by=sort_by
+    )
 
     if interactive:
-        browse(matched_threads, sort_by=sort_by, reload_threads=find_threads)
+        browse(
+            matched_threads,
+            sort_by=sort_by,
+            load_page=make_page_loader(forum_id, regex=regex),
+            pages_loaded=pages,
+        )
     elif output == "json":
         click.echo_via_pager(
             json.dumps(

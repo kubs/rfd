@@ -12,7 +12,13 @@ import webbrowser
 from .api import get_posts_page, resolve_post_id
 from .threads import sort_threads
 
-SORT_ORDER = [None, "score", "views", "title"]
+SORT_KEYS = {"s": "score", "v": "views", "t": "title", "n": None}
+
+# Sensible direction per field: the best deals first, but titles a to z.
+SORT_DESCENDING = {"score": True, "views": True, "title": False, None: True}
+
+# Stop chasing pages that match nothing after this many empty-handed fetches.
+MAX_PAGES_PER_LOAD = 5
 
 HELP = [
     ("Movement", ""),
@@ -25,9 +31,15 @@ HELP = [
     ("Threads", ""),
     ("  enter / o / l", "open the thread"),
     ("  O", "open the thread in a web browser"),
-    ("  y", "yank the thread url to the clipboard"),
-    ("  s", "cycle sort (none, score, views, title)"),
-    ("  r", "reload threads"),
+    ("  d / D", "open the deal link, cleaned / exactly as the forum gave it"),
+    ("  y / Y", "yank the thread / deal url to the clipboard"),
+    ("  p", "load the next page of threads"),
+    ("  r", "reload from the first page"),
+    ("", ""),
+    ("Sort", ""),
+    ("  s then s / v / t", "sort by score / views / title"),
+    ("  s then n", "back to forum order"),
+    ("  s then r", "reverse the current sort"),
     ("", ""),
     ("Search", ""),
     ("  /", "search titles (or post text)"),
@@ -102,6 +114,7 @@ class PostLoader:
     def __init__(self, url):
         self.post_id = resolve_post_id(url)
         self.posts = []
+        self.links = []
         self.total_pages = None
         self.pages_loaded = 0
         self.error = None
@@ -115,6 +128,10 @@ class PostLoader:
             while True:
                 posts, total_pages = get_posts_page(self.post_id, page)
                 with self._lock:
+                    if page == 1 and posts:
+                        # The deal usually sits in the first post when the
+                        # thread has no "get deal at ..." button.
+                        self.links = posts[0].links
                     self.posts.extend(posts)
                     self.total_pages = total_pages
                     self.pages_loaded = page
@@ -166,12 +183,119 @@ class Pane:
         self.clamp(count)
 
 
-class Browser:  # pylint: disable=too-many-instance-attributes
-    def __init__(self, stdscr, threads, sort_by=None, reload_threads=None):
-        self.stdscr = stdscr
-        self.threads = list(threads)
+class ThreadFeed:  # pylint: disable=too-many-instance-attributes
+    """The thread list, plus the paging and sorting applied to it.
+
+    Pages are fetched on a worker thread but only ever merged in by the main
+    thread in poll(), so the list the ui draws is never mutated underneath it.
+    """
+
+    def __init__(
+        self, threads, load_page=None, pages_loaded=1, sort_by=None, reverse=None
+    ):
+        self.load_page = load_page
+        self.page = pages_loaded
         self.sort_by = sort_by
-        self.reload_threads = reload_threads
+        self.reverse = True if reverse is None else reverse
+        self.exhausted = load_page is None
+        self.loading = False
+        self.error = None
+        self.threads = []
+        self.urls = set()
+        self.arrival = {}
+        self._pending = None
+        self._lock = threading.Lock()
+        self.add(threads)
+        if sort_by is not None:
+            if reverse is None:
+                self.reverse = SORT_DESCENDING.get(sort_by, True)
+            self.sort()
+
+    def add(self, threads):
+        """Append threads that are not already listed. Returns how many stuck.
+
+        The forum reshuffles as people post, so the same thread can turn up on
+        two different pages.
+        """
+        added = 0
+        for thread in threads:
+            if thread.url in self.urls:
+                continue
+            self.urls.add(thread.url)
+            self.arrival[thread.url] = len(self.arrival)
+            self.threads.append(thread)
+            added += 1
+        return added
+
+    def sort(self):
+        self.threads = sort_threads(self.threads, self.sort_by, reverse=self.reverse)
+
+    def set_sort(self, sort_by, reverse):
+        self.sort_by = sort_by
+        self.reverse = reverse
+        if sort_by is None:
+            # Forum order is the order the pages arrived in.
+            self.threads = sorted(self.threads, key=lambda t: self.arrival[t.url])
+        else:
+            self.sort()
+
+    def can_load(self):
+        # A failed page stops the automatic fetching; p retries it.
+        return (
+            bool(self.load_page)
+            and not self.exhausted
+            and not self.loading
+            and self.error is None
+        )
+
+    def load_more(self):
+        if not self.can_load():
+            return
+        self.loading = True
+        threading.Thread(target=self._fetch, daemon=True).start()
+
+    def _fetch(self):
+        """Fetch pages until something new turns up or the forum runs out."""
+        found, done, exhausted, error = [], self.page, False, None
+        try:
+            for offset in range(1, MAX_PAGES_PER_LOAD + 1):
+                page = self.page + offset
+                threads, topics_on_page = self.load_page(page)
+                if not topics_on_page:
+                    exhausted = True  # nothing on it, so it does not count
+                    break
+                done = page
+                found.extend(threads)
+                if any(thread.url not in self.urls for thread in threads):
+                    break
+        except Exception as err:  # pylint: disable=broad-except
+            # Leave the counter on the last good page so p retries the failure.
+            error = str(err)
+        with self._lock:
+            self._pending = (found, done, exhausted, error)
+
+    def poll(self):
+        """Merge a finished fetch. Returns True when the list changed."""
+        with self._lock:
+            pending, self._pending = self._pending, None
+        if pending is None:
+            return False
+        found, page, exhausted, error = pending
+        self.page = page
+        self.exhausted = exhausted
+        self.error = error
+        self.loading = False
+        if not self.add(found):
+            return False
+        if self.sort_by is not None:
+            self.sort()
+        return True
+
+
+class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
+    def __init__(self, stdscr, feed):
+        self.stdscr = stdscr
+        self.feed = feed
         self.attrs = _init_colors()
         self.list_pane = Pane()
         self.post_pane = Pane()
@@ -183,6 +307,10 @@ class Browser:  # pylint: disable=too-many-instance-attributes
         self.pattern = None
         self.pending_count = ""
         self.showing_help = False
+
+    @property
+    def threads(self):
+        return self.feed.threads
 
     # -- drawing ---------------------------------------------------------
 
@@ -222,26 +350,37 @@ class Browser:  # pylint: disable=too-many-instance-attributes
     def draw_threads(self, height, width):
         self.list_pane.height = height - 2
         self.list_pane.clamp(len(self.threads))
-        sort_by = self.sort_by or "none"
-        self._bar(
-            0,
-            f" rfd  {len(self.threads)} threads  sort: {sort_by} ",
-        )
+        self._bar(0, f" rfd  {len(self.threads)} threads  {self.sort_label()} ")
         for row in range(self.list_pane.height):
             index = self.list_pane.top + row
             if index >= len(self.threads):
                 break
             self.draw_thread_row(row + 1, index, width)
+        self._bar(height - 1, *self.list_footer())
+
+    def sort_label(self):
+        if self.feed.sort_by is None:
+            return "sort: forum order"
+        return f"sort: {self.feed.sort_by} {'desc' if self.feed.reverse else 'asc'}"
+
+    def list_footer(self):
+        if self.status:
+            return self.status, DIM
+        if self.feed.error:
+            return f" could not load more threads: {self.feed.error} ", RED
+        if self.feed.loading:
+            return f" loading page {self.feed.page + 1}... ", DIM
         position = (
             f"{self.list_pane.cursor + 1}/{len(self.threads)}"
             if self.threads
             else "0/0"
         )
-        self._bar(
-            height - 1,
-            self.status
-            or f" {position}   j/k move  enter open  O browser  / search  ? help  q quit ",
-            DIM if self.status else HEADER,
+        pages = f"{self.feed.page} page{'s' if self.feed.page != 1 else ''}"
+        if self.feed.exhausted:
+            pages += ", end of forum"
+        return (
+            f" {position}  {pages}   j/k move  enter open  s sort  / search  ? help  q quit ",
+            HEADER,
         )
 
     def draw_thread_row(self, y, index, width):
@@ -258,11 +397,22 @@ class Browser:  # pylint: disable=too-many-instance-attributes
         self._put(y, x, f" ({thread.views} views)", YELLOW, extra)
 
     def draw_posts(self, height, width):
-        self.post_pane.height = height - 2
+        # Links get their own rows under the title: the deal, then the thread.
+        deal = self.deal_line()
+        body_top = 3 if deal else 2
+        self.post_pane.height = height - body_top - 1
         posts, total_pages, pages_loaded, done, error = self.loader.snapshot()
         self.render_posts(posts, width)
         self.post_pane.clamp(len(self.post_lines))
         self._bar(0, f" {self.thread.title} ")
+        row = 1
+        if deal:
+            label, url = deal
+            x = self._put(row, 0, f" {label} ", BOLD)
+            self._put(row, x + 1, url, BLUE)
+            row += 1
+        x = self._put(row, 0, " rfd  ", DIM)
+        self._put(row, x + 1, self.thread.url, DIM)
         for row in range(self.post_pane.height):
             index = self.post_pane.top + row
             if index >= len(self.post_lines):
@@ -271,15 +421,20 @@ class Browser:  # pylint: disable=too-many-instance-attributes
             selected = index == self.post_pane.cursor
             extra = curses.A_REVERSE if selected else 0
             if selected:
-                self._put(row + 1, 0, " " * (width - 1), PLAIN, extra)
-            self._put(row + 1, 0, text, attr_key, extra)
-        if error:
+                self._put(row + body_top, 0, " " * (width - 1), PLAIN, extra)
+            self._put(row + body_top, 0, text, attr_key, extra)
+        if self.status:
+            footer, attr = self.status, DIM
+        elif error:
             footer, attr = f" error: {error} ", RED
         elif not done:
             loading = f"{pages_loaded}/{total_pages}" if total_pages else "..."
             footer, attr = f" loading page {loading}   {len(posts)} posts so far ", DIM
         else:
-            footer = f" {len(posts)} posts   j/k scroll  O browser  y yank  q back "
+            hint = "  d deal" if deal else ""
+            footer = (
+                f" {len(posts)} posts   j/k scroll{hint}  O rfd page  y yank  q back "
+            )
             attr = HEADER
         self._bar(height - 1, footer, attr)
 
@@ -358,30 +513,86 @@ class Browser:  # pylint: disable=too-many-instance-attributes
         self.post_lines = []
         self.post_cache_key = None
 
-    def cycle_sort(self):
-        self.sort_by = SORT_ORDER[
-            (SORT_ORDER.index(self.sort_by) + 1) % len(SORT_ORDER)
-        ]
-        if self.sort_by is not None:
-            self.threads = sort_threads(self.threads, sort_by=self.sort_by)
-        elif self.reload_threads:
-            self.threads = list(self.reload_threads())
-        self.list_pane = Pane()
+    def anchor(self):
+        """Remember the thread under the cursor, so a re-sort can keep it there."""
+        if self.threads and self.list_pane.cursor < len(self.threads):
+            return self.threads[self.list_pane.cursor].url
+        return None
+
+    def restore(self, url):
+        if url is not None:
+            for index, thread in enumerate(self.threads):
+                if thread.url == url:
+                    self.list_pane.cursor = index
+                    break
+        self.list_pane.clamp(len(self.threads))
+
+    def choose_sort(self):
+        """s, then one key. Beats cycling once there is more than one axis."""
+        self._bar(
+            self.stdscr.getmaxyx()[0] - 1,
+            " sort by  [s]core  [v]iews  [t]itle  [n]one     [r]everse ",
+            PLAIN,
+        )
+        self.stdscr.refresh()
+        key = self.stdscr.getch()
+        if key in (-1, 27):
+            return
+        char = chr(key) if 0 <= key < 256 else ""
+        anchored = self.anchor()
+        if char == "r":
+            self.feed.set_sort(self.feed.sort_by, not self.feed.reverse)
+        elif char in SORT_KEYS:
+            sort_by = SORT_KEYS[char]
+            self.feed.set_sort(sort_by, SORT_DESCENDING[sort_by])
+        else:
+            return
+        self.restore(anchored)
+        self.status = f" {self.sort_label()} "
+
+    def load_more(self, announce=False):
+        if self.feed.loading:
+            return
+        if self.feed.exhausted:
+            if announce:
+                self.status = " already at the end of the forum "
+            return
+        if not self.feed.load_page:
+            if announce:
+                self.status = " nothing more to load "
+            return
+        if announce:
+            self.feed.error = None  # an explicit p retries a failed page
+        self.feed.load_more()
+
+    def maybe_load_more(self):
+        """Fetch ahead once the cursor reaches the last screenful."""
+        if (
+            self.thread is None
+            and self.list_pane.cursor >= len(self.threads) - self.list_pane.height
+        ):
+            self.load_more()
 
     def reload(self):
-        if not self.reload_threads:
+        if not self.feed.load_page:
             self.status = " nothing to reload "
             return
         self._bar(self.stdscr.getmaxyx()[0] - 1, " reloading... ", DIM)
         self.stdscr.refresh()
+        anchored = self.anchor()
         try:
-            self.threads = sort_threads(
-                list(self.reload_threads()), sort_by=self.sort_by
-            )
+            threads, _ = self.feed.load_page(1)
         except Exception as err:  # pylint: disable=broad-except
             self.status = f" reload failed: {err} "
             return
-        self.list_pane.clamp(len(self.threads))
+        self.feed = ThreadFeed(
+            threads,
+            load_page=self.feed.load_page,
+            pages_loaded=1,
+            sort_by=self.feed.sort_by,
+            reverse=self.feed.reverse,
+        )
+        self.restore(anchored)
         self.status = f" reloaded {len(self.threads)} threads "
 
     # -- search ----------------------------------------------------------
@@ -435,6 +646,40 @@ class Browser:  # pylint: disable=too-many-instance-attributes
         self.status = f" pattern not found: {self.pattern.pattern} "
 
     # -- input -----------------------------------------------------------
+
+    def deal_line(self):
+        """(label, url) for the deal link, or None when the thread has none.
+
+        A thread either has a "get deal at ..." button, or the deal is a link
+        in the first post; both arrive wrapped in affiliate hops.
+        """
+        thread = self.thread
+        if thread is None and self.threads:
+            thread = self.threads[self.list_pane.cursor]
+        if thread is None:
+            return None
+        if thread.deal_url:
+            return "deal", thread.deal_url
+        if self.thread is not None and self.loader.links:
+            return "link", self.loader.links[0]
+        return None
+
+    def current_deal(self):
+        line = self.deal_line()
+        return line[1] if line else ""
+
+    def open_deal(self, original=False):
+        """d opens the cleaned link, D the one the forum handed out."""
+        line = self.deal_line()
+        if not line:
+            self.status = " no deal link on this thread "
+            return
+        url = line[1]
+        if original:
+            thread = self.thread or self.threads[self.list_pane.cursor]
+            url = thread.raw_deal_url or url
+        webbrowser.open(url)
+        self.status = f" opened {url} "
 
     def current_url(self):
         if self.thread is not None:
@@ -501,6 +746,20 @@ class Browser:  # pylint: disable=too-many-instance-attributes
             if url:
                 webbrowser.open(url)
                 self.status = f" opened {url} "
+        elif key == ord("d"):
+            self.open_deal()
+        elif key == ord("D"):
+            self.open_deal(original=True)
+        elif key == ord("Y"):
+            deal = self.current_deal()
+            if not deal:
+                self.status = " no deal link on this thread "
+            else:
+                self.status = (
+                    f" yanked {deal} "
+                    if copy_to_clipboard(deal)
+                    else " could not reach a clipboard "
+                )
         elif key == ord("y"):
             url = self.current_url()
             if url:
@@ -510,7 +769,9 @@ class Browser:  # pylint: disable=too-many-instance-attributes
                     else " could not reach a clipboard "
                 )
         elif key == ord("s") and self.thread is None:
-            self.cycle_sort()
+            self.choose_sort()
+        elif key == ord("p") and self.thread is None:
+            self.load_more(announce=True)
         elif key == ord("r") and self.thread is None:
             self.reload()
         elif key == 12:  # ctrl-l
@@ -523,6 +784,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes
             self.close_thread()
         elif key == curses.KEY_RESIZE:
             self.on_resize()
+        self.maybe_load_more()
         return True
 
     def on_resize(self):
@@ -540,11 +802,16 @@ class Browser:  # pylint: disable=too-many-instance-attributes
             pass
         self.stdscr.keypad(True)
         while True:
+            if self.feed.poll():
+                self.list_pane.clamp(len(self.threads))
+                # Keep filling until the list is at least a screen deep.
+                self.maybe_load_more()
             self.draw()
             # Poll so background post pages appear as they arrive.
-            self.stdscr.timeout(
-                200 if self.thread is not None and not self.loader.done else -1
+            busy = self.feed.loading or (
+                self.thread is not None and not self.loader.done
             )
+            self.stdscr.timeout(200 if busy else -1)
             key = self.stdscr.getch()
             if key == -1:
                 continue
@@ -552,8 +819,14 @@ class Browser:  # pylint: disable=too-many-instance-attributes
                 return
 
 
-def browse(threads, sort_by=None, reload_threads=None):
-    """Browse threads interactively. Blocks until the user quits."""
-    curses.wrapper(
-        lambda stdscr: Browser(stdscr, threads, sort_by, reload_threads).run()
+def browse(threads, sort_by=None, load_page=None, pages_loaded=1):
+    """Browse threads interactively. Blocks until the user quits.
+
+    load_page(page) should return (threads, topics_on_page); the second value
+    is what tells the feed the forum has run out, since the api reports a
+    total_pages of -1.
+    """
+    feed = ThreadFeed(
+        threads, load_page=load_page, pages_loaded=pages_loaded, sort_by=sort_by
     )
+    curses.wrapper(lambda stdscr: Browser(stdscr, feed).run())

@@ -26,3 +26,16 @@ def test_parse_threads(threads_api_response):
 def test_parse_threads_empty():
 
     assert parse_threads(None) == []
+
+
+def test_parse_threads_keeps_the_deal_link_without_its_tracking(threads_api_response):
+    threads = parse_threads(threads_api_response.get("topics"))
+
+    wyzecam = threads[1]
+    assert wyzecam.deal_url == "https://www.amazon.ca/gp/aw/d/B076H3SRXG/"
+
+    glad = threads[3]
+    assert "qid=" not in glad.deal_url
+    assert glad.deal_url.startswith(
+        "https://www.amazon.ca/Glad-Cling-Wrap-Plastic-Metre/dp/B01GZTGTWW"
+    )

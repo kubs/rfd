@@ -3,11 +3,17 @@ import json
 from colorama import Fore, Style
 from . import API_BASE_URL
 from .scores import calculate_score, get_vote_color
+from .utils import clean_url
 
 
 class Thread:
-    def __init__(self, title, dealer_name, score, url, views):
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def __init__(
+        self, title, dealer_name, score, url, views, deal_url="", raw_deal_url=""
+    ):
         self.dealer_name = dealer_name
+        self.deal_url = deal_url
+        self.raw_deal_url = raw_deal_url
         self.score = score
         self.title = title
         self.url = url
@@ -21,6 +27,7 @@ class ThreadEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, Thread):
             return dict(
+                deal_url=o.deal_url,
                 dealer_name=o.dealer_name,
                 score=o.score,
                 title=o.title,
@@ -41,6 +48,13 @@ def get_dealer(topic):
     return dealer
 
 
+def get_deal_url(topic):
+    """The url behind the "get deal at ..." button, as given and cleaned up."""
+    offer = topic.get("offer") or {}
+    raw = offer.get("url") or ""
+    return clean_url(raw), raw
+
+
 def parse_threads(threads):
     """Parse topics list api response into digestible list.
 
@@ -54,6 +68,7 @@ def parse_threads(threads):
     if threads is None:
         return []
     for topic in threads:
+        deal_url, raw_deal_url = get_deal_url(topic)
         parsed_threads.append(
             Thread(
                 title=topic.get("title"),
@@ -61,17 +76,19 @@ def parse_threads(threads):
                 score=calculate_score(topic),
                 url=build_web_path(topic.get("web_path")),
                 views=topic.get("total_views"),
+                deal_url=deal_url,
+                raw_deal_url=raw_deal_url,
             )
         )
     return parsed_threads
 
 
-def sort_threads(threads, sort_by):
+def sort_threads(threads, sort_by, reverse=True):
     """Sort threads by an attribute"""
     if sort_by is None:
         return threads
     assert sort_by in ["views", "score", "title"]
-    threads = sorted(threads, key=lambda x: getattr(x, sort_by), reverse=True)
+    threads = sorted(threads, key=lambda x: getattr(x, sort_by), reverse=reverse)
     return threads
 
 

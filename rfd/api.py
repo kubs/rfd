@@ -10,9 +10,12 @@ import requests
 from . import API_BASE_URL
 from .posts import Post
 from .scores import calculate_score
-from .utils import is_int, strip_html, is_valid_url
+from .utils import extract_links, html_to_text, is_int, is_valid_url
 
 USER_AGENT = "rfd (+https://github.com/davegallant/rfd)"
+
+# The api rejects anything above 40 with a 400.
+PER_PAGE = 40
 
 # The forums reject the default requests user agent with a 406. A session per
 # thread keeps connections warm without sharing one across the background
@@ -50,6 +53,29 @@ def create_user_map(users):
     return m
 
 
+def get_threads_page(forum_id, page):
+    """Get a single page of topics from the rfd api.
+
+    The api caps per_page at 40 and reports a total_pages of -1, so the end of
+    a forum is only visible as a page that comes back empty.
+
+    Arguments:
+        forum_id {int} -- forum id
+        page {int} -- the page to collect (1 indexed)
+
+    Returns:
+        list(dict) -- topics on that page
+    """
+    response = get_session().get(
+        f"{API_BASE_URL}/api/topics?forum_id={forum_id}&per_page={PER_PAGE}&page={page}"
+    )
+    if response.status_code != 200:
+        raise Exception(
+            f"When collecting threads, received a status code: {response.status_code}"
+        )
+    return response.json().get("topics") or []
+
+
 def get_threads(forum_id, pages):
     """Get threads from rfd api
 
@@ -63,14 +89,7 @@ def get_threads(forum_id, pages):
     threads = []
     try:
         for page in range(1, pages + 1):
-            response = get_session().get(
-                f"{API_BASE_URL}/api/topics?forum_id={forum_id}&per_page=40&page={page}"
-            )
-            if response.status_code != 200:
-                raise Exception(
-                    f"When collecting threads, received a status code: {response.status_code}"
-                )
-            threads += response.json().get("topics")
+            threads += get_threads_page(forum_id, page)
     except JSONDecodeError as err:
         logging.error("Unable to decode threads. %s", err)
     return threads
@@ -116,11 +135,13 @@ def get_posts_page(post, page):
             calculated_score = calculate_score(_post)
         else:
             calculated_score = 0
+        body = _post.get("body") or ""
         posts.append(
             Post(
-                body=strip_html(_post.get("body")),
+                body=html_to_text(body),
                 score=calculated_score,
                 user=users.get(_post.get("author_id")) or "unknown",
+                links=extract_links(body),
             )
         )
 

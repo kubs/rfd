@@ -131,15 +131,41 @@ rfd search 'coffee' -i --pages 10
 | `enter`, `o`, `l` | open the selected thread |
 | `q`, `h`, `esc` | go back (quits from the thread list) |
 | `Q` | quit |
-| `O` | open the thread in a web browser |
-| `y` | yank the thread url to the clipboard |
+| `d` / `D` | open the deal link, cleaned / exactly as the forum gave it |
+| `O` | open the thread on redflagdeals.com |
+| `y` / `Y` | yank the thread / deal url to the clipboard |
 | `/`, then `n` / `N` | search, next / previous match |
-| `s` | cycle sort (none, score, views, title) |
-| `r` | reload threads |
+| `s` then `s` / `v` / `t` / `n` | sort by score / views / title / forum order |
+| `s` then `r` | reverse the current sort |
+| `p` | load the next page of threads |
+| `r` | reload from the first page |
 | `?` | show the keys |
+
+An opened thread shows its links under the title: the deal, and the thread's own
+url on the forum. Threads without a *get deal at ...* button usually have the
+deal as a link in the first post, and that is used instead.
+
+Link text in posts is truncated by the forum to something like
+`https://www.staples.ca/produ ... er-20-pack`, which cannot be copied or
+followed, so the real url is put back into the text.
+
+Tracking is taken off both: affiliate hops through Skimlinks,
+LinkSynergy and Impact Radius are unwrapped back to the real destination, and
+`utm_*`, `tag`, `ref`, `gclid` and friends are dropped. Params the page needs to
+show the right thing, like an Amazon variant or a store id, are kept, and a
+redirect that hides its destination server side is left alone rather than
+guessed at. `D` opens the untouched url the forum handed out, for when a deal
+needs the affiliate hop. The cleaned link is in `--output json` as `deal_url`,
+and every post carries the links found in it as `links`.
 
 Posts are fetched page by page in the background, so a long thread is scrollable
 as soon as its first page arrives.
+
+The forum api caps a request at 40 threads, so the list pages itself: scrolling
+towards the bottom pulls in the next page (`p` fetches one immediately), and
+`--pages` still controls how much is loaded up front. Sorting applies to
+everything loaded so far and keeps the cursor on the thread you were looking at,
+so paging and sorting can be mixed freely.
 
 ### JSON Output
 

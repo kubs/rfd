@@ -6,8 +6,9 @@ from .scores import get_vote_color
 
 
 class Post:
-    def __init__(self, body, score, user):
+    def __init__(self, body, score, user, links=None):
         self.body = body
+        self.links = links or []
         self.score = score
         self.user = user
 
@@ -17,6 +18,7 @@ class PostEncoder(json.JSONEncoder):
         if isinstance(o, Post):
             return dict(
                 body=o.body,
+                links=o.links,
                 score=o.score,
                 user=o.user,
             )
