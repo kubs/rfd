@@ -6,6 +6,7 @@
 
 <!-- BEGIN mktoc -->
 - [Description](#description)
+- [What This Fork Adds](#what-this-fork-adds)
 - [Motivation](#motivation)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -27,6 +28,37 @@ This is a CLI utility that allows you to view [RedFlagDeals.com](https://forums.
 
 ![screenshot](https://user-images.githubusercontent.com/4519234/85969861-e10a4100-b996-11ea-9a31-6203322c60ee.png)
 
+## What This Fork Adds
+
+Everything upstream does is unchanged: commands still print to a pager and still
+speak JSON. On top of that:
+
+- **[An interactive browser](#interactive-mode)** — `rfd threads -i` and
+  `rfd search -i` open the list with vim key bindings instead of paging it, so
+  threads and their posts can be read, searched and opened without leaving the
+  keyboard.
+- **More than 40 threads.** The api caps a request at 40, so the list pages
+  itself as you scroll rather than stopping at one screenful.
+- **Sorting from the keyboard.** `s` then `s`, `v`, `t` or `n`, without
+  re-running the command, keeping the cursor on the thread you were reading.
+- **Deal links, with the tracking off.** An opened thread shows the url behind
+  its *get deal at ...* button (or the deal link in the first post when it has
+  no button). Affiliate hops are unwrapped back to the merchant and `utm_*` and
+  friends are dropped, while anything that could change what the page shows is
+  left alone. It is also in the json as `deal_url`.
+- **Usable urls in posts.** The forum truncates link text to
+  `https://www.stap ... 20-pack`; the real url is put back, in the browser and
+  in the pager both.
+
+It also fixes three things that were broken:
+
+- The forums answer the default `python-requests` user agent with a **406**,
+  which broke every command.
+- `rfd posts` requested page 0 and page 1, **duplicating the first 40 posts** of
+  every thread.
+- Terminal width was read by shelling out to `stty`, which raised off a tty and
+  surfaced as the misleading `Invalid post id.`
+
 ## Motivation
 
 It is often faster to use a CLI than to load up a web page and navigate web elements. This tool can search for deals and sort them based on score and views. It is also able to load entire threads (without pagination) for additional analysis.
@@ -47,6 +79,21 @@ If you have [brew](https://brew.sh):
 
 ```sh
 brew install davegallant/public/rfd
+```
+
+### from source
+
+pip and brew install upstream, without the additions above. To install this
+fork:
+
+```sh
+pipx install "git+https://github.com/kubs/rfd.git@interactive-browser"
+```
+
+Or, to work on it, from a clone:
+
+```sh
+pipx install --force -e .
 ```
 
 ## Usage
