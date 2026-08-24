@@ -87,7 +87,7 @@ pip and brew install upstream, without the additions above. To install this
 fork:
 
 ```sh
-pipx install "git+https://github.com/kubs/rfd.git@interactive-browser"
+pipx install git+https://github.com/kubs/rfd.git
 ```
 
 Or, to work on it, from a clone:
