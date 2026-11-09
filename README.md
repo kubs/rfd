@@ -184,6 +184,8 @@ rfd search 'coffee' -i --pages 10
 | `/`, then `n` / `N` | search, next / previous match |
 | `s` then `s` / `v` / `t` / `n` | sort by score / views / title / forum order |
 | `s` then `r` | reverse the current sort |
+| `b` / `*` | star or unstar the selected deal thread |
+| `B` | view saved deals / return to the feed |
 | `p` | load the next page of threads |
 | `r` | reload from the first page |
 | `?` | show the keys |
@@ -213,6 +215,26 @@ towards the bottom pulls in the next page (`p` fetches one immediately), and
 `--pages` still controls how much is loaded up front. Sorting applies to
 everything loaded so far and keeps the cursor on the thread you were looking at,
 so paging and sorting can be mixed freely.
+
+### Saved Deals
+
+Press `b` or `*` in interactive mode to star a deal thread, including while
+reading its replies. A `*` beside the title marks saved deals. Press `B` to
+browse them, and `B` or `q` from the saved list to return to the feed.
+
+Retrieve bookmarks in a later session:
+
+```sh
+rfd bookmarks       # print saved titles and URLs
+rfd bookmarks -i    # browse, open, search, and unstar saved deals
+rfd bookmarks --output json
+```
+
+The saved list is available offline; opening a thread fetches its replies.
+Bookmarks save a snapshot of the title, score, and links in
+`$XDG_DATA_HOME/rfd/bookmarks.json` (default: `~/.local/share/rfd/bookmarks.json`).
+They save whole deal threads, rather than individual replies. Press `b` again
+to remove a bookmark. Saved scores and view counts reflect the time of saving.
 
 ### JSON Output
 

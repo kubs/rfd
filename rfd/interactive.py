@@ -11,6 +11,7 @@ import webbrowser
 
 from .api import get_posts_page, resolve_post_id
 from .threads import sort_threads
+from .bookmarks import load_bookmarks, toggle_bookmark, identity
 
 SORT_KEYS = {"s": "score", "v": "views", "t": "title", "n": None}
 
@@ -33,6 +34,8 @@ HELP = [
     ("  O", "open the thread in a web browser"),
     ("  d / D", "open the deal link, cleaned / exactly as the forum gave it"),
     ("  y / Y", "yank the thread / deal url to the clipboard"),
+    ("  b / *", "star / unstar this deal thread"),
+    ("  B", "show saved deals / return to feed"),
     ("  p", "load the next page of threads"),
     ("  r", "reload from the first page"),
     ("", ""),
@@ -293,7 +296,7 @@ class ThreadFeed:  # pylint: disable=too-many-instance-attributes
 
 
 class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
-    def __init__(self, stdscr, feed):
+    def __init__(self, stdscr, feed, bookmarks_mode=False):
         self.stdscr = stdscr
         self.feed = feed
         self.attrs = _init_colors()
@@ -307,6 +310,63 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         self.pattern = None
         self.pending_count = ""
         self.showing_help = False
+        self.bookmarks_mode = bookmarks_mode
+        self.previous_feed = None
+        self.saved_ids = set()
+        self.refresh_bookmarks()
+
+    def refresh_bookmarks(self):
+        try:
+            saved = load_bookmarks()
+            self.saved_ids = {identity(item.url) for item in saved}
+            return saved
+        except (OSError, ValueError) as err:
+            self.status = f" bookmarks error: {err} "
+            return None
+
+    def toggle_star(self):
+        thread = self.thread or (
+            self.threads[self.list_pane.cursor] if self.threads else None
+        )
+        if thread is None:
+            self.status = " no thread selected "
+            return
+        try:
+            added = toggle_bookmark(thread)
+        except (OSError, ValueError) as err:
+            self.status = f" could not save bookmark: {err} "
+            return
+        saved = self.refresh_bookmarks()
+        if self.bookmarks_mode and saved is not None:
+            self.feed = ThreadFeed(
+                saved, sort_by=self.feed.sort_by, reverse=self.feed.reverse
+            )
+            self.list_pane.clamp(len(self.threads))
+        self.status = (
+            " starred; B opens saved deals " if added else " removed bookmark "
+        )
+
+    def toggle_saved(self):
+        if self.bookmarks_mode and self.previous_feed is not None:
+            self.close_thread()
+            self.feed, self.list_pane = self.previous_feed
+            self.previous_feed = None
+            self.bookmarks_mode = False
+            return
+        saved = self.refresh_bookmarks()
+        if saved is None:
+            return
+        self.close_thread()
+        if not self.bookmarks_mode:
+            self.previous_feed = (self.feed, self.list_pane)
+        self.feed = ThreadFeed(saved)
+        self.list_pane = Pane()
+        self.bookmarks_mode = True
+        self.status = (
+            " saved deals; b removes a star "
+            if saved
+            else " no saved deals yet; b stars a deal in the feed "
+        )
 
     @property
     def threads(self):
@@ -350,7 +410,10 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
     def draw_threads(self, height, width):
         self.list_pane.height = height - 2
         self.list_pane.clamp(len(self.threads))
-        self._bar(0, f" rfd  {len(self.threads)} threads  {self.sort_label()} ")
+        self._bar(
+            0,
+            f" rfd  {'Saved deals' if self.bookmarks_mode else 'Threads'}: {len(self.threads)}  {self.sort_label()} ",
+        )
         for row in range(self.list_pane.height):
             index = self.list_pane.top + row
             if index >= len(self.threads):
@@ -376,10 +439,12 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             else "0/0"
         )
         pages = f"{self.feed.page} page{'s' if self.feed.page != 1 else ''}"
-        if self.feed.exhausted:
+        if self.bookmarks_mode:
+            pages = "saved deals"
+        elif self.feed.exhausted:
             pages += ", end of forum"
         return (
-            f" {position}  {pages}   j/k move  enter open  s sort  / search  ? help  q quit ",
+            f" {position}  {pages}   j/k move  enter open  b star  B saved  s sort  / search  ? help  q quit ",
             HEADER,
         )
 
@@ -390,6 +455,13 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         if selected:
             self._put(y, 0, " " * (width - 1), PLAIN, extra)
         x = self._put(y, 0, f"{index + 1:>4}.", DIM, extra)
+        x = self._put(
+            y,
+            x,
+            " *" if identity(thread.url) in self.saved_ids else "  ",
+            YELLOW,
+            extra,
+        )
         x = self._put(y, x, f" [{thread.score:+d}] ", _score_attr(thread.score), extra)
         if thread.dealer_name:
             x = self._put(y, x, f"[{thread.dealer_name}] ", CYAN, extra)
@@ -404,7 +476,10 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         posts, total_pages, pages_loaded, done, error = self.loader.snapshot()
         self.render_posts(posts, width)
         self.post_pane.clamp(len(self.post_lines))
-        self._bar(0, f" {self.thread.title} ")
+        self._bar(
+            0,
+            f" {'* ' if identity(self.thread.url) in self.saved_ids else ''}{self.thread.title} ",
+        )
         row = 1
         if deal:
             label, url = deal
@@ -432,9 +507,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             footer, attr = f" loading page {loading}   {len(posts)} posts so far ", DIM
         else:
             hint = "  d deal" if deal else ""
-            footer = (
-                f" {len(posts)} posts   j/k scroll{hint}  O rfd page  y yank  q back "
-            )
+            footer = f" {len(posts)} posts   j/k scroll{hint}  O rfd page  b star  B saved  q back "
             attr = HEADER
         self._bar(height - 1, footer, attr)
 
@@ -768,6 +841,10 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
                     if copy_to_clipboard(url)
                     else " could not reach a clipboard "
                 )
+        elif key in (ord("b"), ord("*")):
+            self.toggle_star()
+        elif key == ord("B"):
+            self.toggle_saved()
         elif key == ord("s") and self.thread is None:
             self.choose_sort()
         elif key == ord("p") and self.thread is None:
@@ -780,6 +857,9 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             return False
         elif key in (ord("q"), ord("h"), 27, curses.KEY_LEFT):
             if self.thread is None:
+                if self.previous_feed is not None:
+                    self.toggle_saved()
+                    return True
                 return False
             self.close_thread()
         elif key == curses.KEY_RESIZE:
@@ -819,7 +899,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
                 return
 
 
-def browse(threads, sort_by=None, load_page=None, pages_loaded=1):
+def browse(threads, sort_by=None, load_page=None, pages_loaded=1, bookmarks_mode=False):
     """Browse threads interactively. Blocks until the user quits.
 
     load_page(page) should return (threads, topics_on_page); the second value
@@ -829,4 +909,6 @@ def browse(threads, sort_by=None, load_page=None, pages_loaded=1):
     feed = ThreadFeed(
         threads, load_page=load_page, pages_loaded=pages_loaded, sort_by=sort_by
     )
-    curses.wrapper(lambda stdscr: Browser(stdscr, feed).run())
+    curses.wrapper(
+        lambda stdscr: Browser(stdscr, feed, bookmarks_mode=bookmarks_mode).run()
+    )

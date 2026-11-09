@@ -20,6 +20,7 @@ from .threads import (
     ThreadEncoder,
 )
 from .posts import generate_posts_output, PostEncoder
+from .bookmarks import load_bookmarks
 
 init()
 
@@ -242,3 +243,24 @@ def search(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         )
     else:
         click.echo_via_pager(generate_thread_output(matched_threads))
+
+
+@cli.command(short_help="Retrieve your locally starred deal threads.")
+@click.option(
+    "-i", "--interactive", is_flag=True, help="Browse saved deals; b removes a star."
+)
+@click.option("--output", type=click.Choice(["json"]), default=None)
+def bookmarks(interactive, output):
+    """List saved deals without fetching the forum. Star deals with b in interactive mode."""
+    try:
+        saved = load_bookmarks()
+    except (OSError, ValueError) as err:
+        raise click.ClickException(str(err)) from err
+    if interactive:
+        load_browser()(saved, bookmarks_mode=True)
+    elif output == "json":
+        click.echo(json.dumps(saved, cls=ThreadEncoder, indent=2, ensure_ascii=False))
+    elif saved:
+        click.echo_via_pager(generate_thread_output(saved))
+    else:
+        click.echo("No saved deals yet. Run rfd threads -i and press b to star a deal.")
