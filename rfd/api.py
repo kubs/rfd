@@ -10,7 +10,7 @@ import requests
 from . import API_BASE_URL
 from .posts import Post
 from .scores import calculate_score
-from .utils import extract_links, html_to_text, is_int, is_valid_url
+from .utils import extract_images, extract_links, html_to_text, is_int, is_valid_url
 
 USER_AGENT = "rfd (+https://github.com/davegallant/rfd)"
 
@@ -142,6 +142,7 @@ def get_posts_page(post, page):
                 score=calculated_score,
                 user=users.get(_post.get("author_id")) or "unknown",
                 links=extract_links(body),
+                images=extract_images(body),
             )
         )
 

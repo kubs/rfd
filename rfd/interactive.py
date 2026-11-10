@@ -10,6 +10,7 @@ import threading
 import webbrowser
 
 from .api import get_posts_page, resolve_post_id
+from .images import supported_terminal, show_images
 from .threads import sort_threads
 from .bookmarks import load_bookmarks, toggle_bookmark, identity
 
@@ -32,6 +33,7 @@ HELP = [
     ("Threads", ""),
     ("  enter / o / l", "open the thread"),
     ("  O", "open the thread in a web browser"),
+    ("  i / enter on image", "preview image in terminal"),
     ("  d / D", "open the deal link, cleaned / exactly as the forum gave it"),
     ("  y / Y", "yank the thread / deal url to the clipboard"),
     ("  b / *", "star / unstar this deal thread"),
@@ -305,6 +307,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         self.thread = None
         self.loaders = {}
         self.post_lines = []
+        self.image_rows = {}
         self.post_cache_key = None
         self.status = ""
         self.pattern = None
@@ -507,7 +510,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             footer, attr = f" loading page {loading}   {len(posts)} posts so far ", DIM
         else:
             hint = "  d deal" if deal else ""
-            footer = f" {len(posts)} posts   j/k scroll{hint}  O rfd page  b star  B saved  q back "
+            footer = f" {len(posts)} posts   j/k scroll{hint}  i image  O rfd page  b star  B saved  q back "
             attr = HEADER
         self._bar(height - 1, footer, attr)
 
@@ -532,6 +535,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         indent = "      "
         wrap_width = max(20, width - len(indent) - 2)
         lines = []
+        self.image_rows = {}
         for count, post in enumerate(posts, 1):
             lines.append(
                 (f"{count:>4}. [{post.score:+d}] {post.user}", _score_attr(post.score))
@@ -543,6 +547,10 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
                     continue
                 for line in textwrap.wrap(paragraph, wrap_width):
                     lines.append((indent + line, PLAIN))
+            for number, url in enumerate(post.images, 1):
+                for line in textwrap.wrap(f"[image {number}] {url} (enter / i to view)", wrap_width):
+                    self.image_rows[len(lines)] = url
+                    lines.append((indent + line, CYAN))
             lines.append((indent + "-" * wrap_width, DIM))
         self.post_lines = lines
 
@@ -580,10 +588,12 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         self.post_pane = Pane()
         self.post_cache_key = None
         self.post_lines = []
+        self.image_rows = {}
 
     def close_thread(self):
         self.thread = None
         self.post_lines = []
+        self.image_rows = {}
         self.post_cache_key = None
 
     def anchor(self):
@@ -754,6 +764,24 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         webbrowser.open(url)
         self.status = f" opened {url} "
 
+    def open_image(self):
+        url = self.image_rows.get(self.post_pane.cursor) if self.thread else None
+        if not url:
+            self.status = " select an image row with j/k, then press i or enter "
+            return
+        if supported_terminal():
+            urls = list(dict.fromkeys(self.image_rows.values()))
+            try:
+                show_images(self.stdscr, urls, urls.index(url))
+            except (OSError, ValueError) as err:
+                self.status = f" could not preview image: {err} "
+            return
+        try:
+            opened = webbrowser.open(url)
+            self.status = f" opened {url} " if opened else " could not open a web browser "
+        except (OSError, webbrowser.Error) as err:
+            self.status = f" could not open image: {err} "
+
     def current_url(self):
         if self.thread is not None:
             return self.thread.url
@@ -814,6 +842,10 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         elif key in (curses.KEY_ENTER, 10, 13, ord("o"), ord("l"), curses.KEY_RIGHT):
             if self.thread is None:
                 self.open_thread()
+            else:
+                self.open_image()
+        elif key == ord("i"):
+            self.open_image()
         elif key == ord("O"):
             url = self.current_url()
             if url:

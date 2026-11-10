@@ -3,9 +3,9 @@
 import re
 
 try:
-    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse  # python 2
+    from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse  # python 2
 except ImportError:
-    from urlparse import parse_qsl, urlencode, urlparse, urlunparse  # python 1
+    from urlparse import parse_qsl, urlencode, urljoin, urlparse, urlunparse  # python 1
 from bs4 import BeautifulSoup
 
 # Affiliate hops carry the real destination in one of these, url encoded.
@@ -165,3 +165,23 @@ def is_int(number):
         return True
     except ValueError:
         return False
+
+
+def extract_images(html):
+    """Keep post images (including lazy loads), excluding forum smilies."""
+    images, seen = [], set()
+    for tag in BeautifulSoup(html, "html.parser").find_all("img"):
+        if "smilies" in tag.get("class", []) or "smiley" in tag.get("class", []):
+            continue
+        source = tag.get("data-src") or tag.get("data-original") or tag.get("src") or ""
+        if not source.strip():
+            continue
+        url = urljoin("https://" + FORUM_HOST + "/", source.strip())
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            continue
+        if "/smilies/" in parsed.path or url in seen:
+            continue
+        seen.add(url)
+        images.append(url)
+    return images

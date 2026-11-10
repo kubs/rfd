@@ -175,7 +175,8 @@ rfd search 'coffee' -i --pages 10
 | `ctrl-d` / `ctrl-u` | half page down / up |
 | `ctrl-f` / `ctrl-b` | full page down / up |
 | `g` / `G` | first / last, or `<number>G` to jump to a line |
-| `enter`, `o`, `l` | open the selected thread |
+| `enter`, `o`, `l` | open the selected thread or image |
+| `i` | preview the selected image in the terminal |
 | `q`, `h`, `esc` | go back (quits from the thread list) |
 | `Q` | quit |
 | `d` / `D` | open the deal link, cleaned / exactly as the forum gave it |
@@ -189,6 +190,14 @@ rfd search 'coffee' -i --pages 10
 | `p` | load the next page of threads |
 | `r` | reload from the first page |
 | `?` | show the keys |
+
+Post images appear as numbered image rows below each post. Select a row with
+`j` / `k` and press `i` or `enter` to preview it in Ghostty or Kitty. In the
+viewer, `h` / `l` selects the previous / next image in the loaded posts, `O`
+opens the original in a browser, and `q` / Esc returns to the same post position.
+Images fit the window and are loaded on demand; animations show their first frame.
+Other terminals and tmux/screen sessions fall back to the browser. Image URLs are also
+included in plain-text and JSON output.
 
 An opened thread shows its links under the title: the deal, and the thread's own
 url on the forum. Threads without a *get deal at ...* button usually have the

@@ -6,9 +6,10 @@ from .scores import get_vote_color
 
 
 class Post:
-    def __init__(self, body, score, user, links=None):
+    def __init__(self, body, score, user, links=None, images=None):
         self.body = body
         self.links = links or []
+        self.images = images or []
         self.score = score
         self.user = user
 
@@ -19,6 +20,7 @@ class PostEncoder(json.JSONEncoder):
             return dict(
                 body=o.body,
                 links=o.links,
+                images=o.images,
                 score=o.score,
                 user=o.user,
             )
@@ -41,6 +43,8 @@ def generate_posts_output(posts):
             + Fore.YELLOW
             + f" ({post.user})"
         )
+        for index, url in enumerate(post.images, 1):
+            output += f"\n      [image {index}] {url}"
         output += Style.RESET_ALL
         output += "\n"
         output += "-" * get_terminal_width()
