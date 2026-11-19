@@ -188,7 +188,7 @@ rfd search 'coffee' -i --pages 10
 | `b` / `*` | star or unstar the selected deal thread |
 | `B` | view saved deals / return to the feed |
 | `p` | load the next page of threads |
-| `r` | reload from the first page |
+| `r` | reload threads or posts from the first page |
 | `?` | show the keys |
 
 Post images appear as numbered image rows below each post. Select a row with

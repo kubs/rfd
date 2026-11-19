@@ -39,7 +39,7 @@ HELP = [
     ("  b / *", "star / unstar this deal thread"),
     ("  B", "show saved deals / return to feed"),
     ("  p", "load the next page of threads"),
-    ("  r", "reload from the first page"),
+    ("  r", "reload threads or posts from the first page"),
     ("", ""),
     ("Sort", ""),
     ("  s then s / v / t", "sort by score / views / title"),
@@ -510,7 +510,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             footer, attr = f" loading page {loading}   {len(posts)} posts so far ", DIM
         else:
             hint = "  d deal" if deal else ""
-            footer = f" {len(posts)} posts   j/k scroll{hint}  i image  O rfd page  b star  B saved  q back "
+            footer = f" {len(posts)} posts   j/k scroll{hint}  r reload  i image  O rfd page  b star  B saved  q back "
             attr = HEADER
         self._bar(height - 1, footer, attr)
 
@@ -657,6 +657,14 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             self.load_more()
 
     def reload(self):
+        if self.thread is not None:
+            self.loaders[self.thread.url] = PostLoader(self.thread.url)
+            self.post_pane = Pane()
+            self.post_cache_key = None
+            self.post_lines = []
+            self.image_rows = {}
+            self.status = ""
+            return
         if not self.feed.load_page:
             self.status = " nothing to reload "
             return
@@ -881,7 +889,7 @@ class Browser:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             self.choose_sort()
         elif key == ord("p") and self.thread is None:
             self.load_more(announce=True)
-        elif key == ord("r") and self.thread is None:
+        elif key == ord("r"):
             self.reload()
         elif key == 12:  # ctrl-l
             self.stdscr.clearok(True)
